@@ -10,22 +10,22 @@ popTest_tabs <- tabsetPanel(
   id = "popTest",
   type = "hidden",
   tabPanel("Mean Test",
-           numericInput("mu", "Population Mean:", value = 400),
+           numericInput("mu", "Population Mean Hypothesis:", value = 400),
            numericInput("mean", "Sample Mean:", value = 398),
            selectInput("sd_Type", "Standard Deviation Type:", sd_Type),
            numericInput("sd", "Standard Deviation:", value = 35, min = 0.01)
   ),
   tabPanel("Proportion Test",
-           numericInput("p_pop", "Population Proportion", value = 0.08),
+           numericInput("p_pop", "Population Proportion Hypothesis", value = 0.08),
            numericInput("p_sample", "Sample Proportion", value = 0.05)
   ),
   tabPanel("Variance Test",
-           numericInput("var_pop", "Population Variance", value = 1),
-           numericInput("var_sample", "Sample Variance", value = 2)
+           numericInput("var_pop", "Population Variance", value = 0.8),
+           numericInput("var_sample", "Sample Variance", value = 1.2)
   )
 )
 
-# Module UI
+# Module UI Plot Distribution
 distributionPlot_ui <- function(id) {
   ns <- NS(id)  # Namespace for module
   tagList(
@@ -33,7 +33,7 @@ distributionPlot_ui <- function(id) {
   )
 }
 
-# Module Server
+# Module Server One Population Mean Test
 onePopMeanTest_server <- function(id, mu, mean, sd, n_sample, sd_Type, conf_int, calculate, properTest) {
   moduleServer(id, function(input, output, session) {
     
@@ -125,6 +125,7 @@ onePopMeanTest_server <- function(id, mu, mean, sd, n_sample, sd_Type, conf_int,
   })
 }
 
+# Module Server One Population Proportion Test
 onePopPropTest_server <- function(id, p_pop, p_sample, n_sample, conf_int, calculate, properTest){
   moduleServer(id, function(input, output, session){
     observeEvent(calculate(), {
@@ -182,7 +183,7 @@ onePopPropTest_server <- function(id, p_pop, p_sample, n_sample, conf_int, calcu
                    label = paste("TS =", round(testStatistics, 2)), hjust = -0.1, size = 4, color = "blue") +
           
           # Plot labels and theme
-          labs(title = "Hypothesis Testing for the Population Mean",
+          labs(title = "Hypothesis Testing for the Population Proportion",
                x = "Test Statistic",
                y = "Probability Density") +
           theme_minimal()
@@ -190,6 +191,70 @@ onePopPropTest_server <- function(id, p_pop, p_sample, n_sample, conf_int, calcu
     })
   })
 }
+
+# Module Server One Population variance Test
+onePopVarTest_server <- function(id, var_pop, var_sample, n_sample, conf_int, calculate, properTest) {
+  moduleServer(id, function(input, output, session){
+    observeEvent(calculate(), {
+      df <- n_sample() - 1
+      testStatistics <- ((n_sample() - 1)* var_sample()) / (var_pop())
+      
+      alpha <- 1 - conf_int()
+      
+      switch(properTest(),
+       "Two-Tailed" = {
+         lower_cv <- qchisq(alpha / 2, df, lower.tail = T)
+         upper_cv <- qchisq(alpha / 2, df, lower.tail = F)
+       },
+       "One-Tailed Left" = {
+         lower_cv <- qchisq(alpha, df, lower.tail = T)
+         upper_cv <- NA
+       },
+       "One-Tailed Right" = {
+         upper_cv <- qchisq(alpha, df, lower.tail = F)
+         lower_cv <- NA
+       }
+      )
+      
+      # Dynamic quantile range
+      quantile <- seq(0, qchisq(0.999, df), length = 1000)
+      prob <- dchisq(quantile, df)
+      
+      output$distributionPlot <- renderPlot({
+        ggplot(data = data.frame(quantile, prob), aes(x = quantile, y = prob)) +
+          geom_line(color = "black") +
+          
+          # Shaded critical regions
+          geom_area(data = subset(data.frame(quantile, prob), !is.na(lower_cv) & quantile < lower_cv), 
+                    aes(x = quantile, y = prob), fill = "red", alpha = 0.5) +
+          geom_area(data = subset(data.frame(quantile, prob), !is.na(upper_cv) & quantile > upper_cv), 
+                    aes(x = quantile, y = prob), fill = "red", alpha = 0.5) +
+          
+          # Vertical lines for critical values
+          { if (!is.na(lower_cv)) geom_vline(xintercept = lower_cv, linetype = "dashed", color = "red") } +
+          { if (!is.na(upper_cv)) geom_vline(xintercept = upper_cv, linetype = "dashed", color = "red") } +
+          
+          # Vertical line for test statistic
+          geom_vline(xintercept = testStatistics, linetype = "solid", color = "blue") +
+          
+          # Annotations
+          { if (!is.na(lower_cv)) annotate("text", x = lower_cv, y = max(prob)*0.9, 
+                                           label = paste("CV =", round(lower_cv, 2)), hjust = 1.1, size = 4, color = "red") } +
+          { if (!is.na(upper_cv)) annotate("text", x = upper_cv, y = max(prob)*0.9, 
+                                           label = paste("CV =", round(upper_cv, 2)), hjust = -0.1, size = 4, color = "red") } +
+          annotate("text", x = testStatistics, y = max(prob)*0.7, 
+                   label = paste("TS =", round(testStatistics, 2)), hjust = -0.1, size = 4, color = "blue") +
+          
+          # Plot labels and theme
+          labs(title = "Hypothesis Testing for Population Variance",
+               x = "Test Statistic",
+               y = "Probability Density") +
+          theme_minimal()
+      })
+    })
+  })
+}
+
 
 # Main UI
 ui <- fluidPage(
@@ -245,6 +310,18 @@ server <- function(input, output, session) {
         output$dynamic_plot <- renderUI(distributionPlot_ui("propTest"))
       },
       
+      "Variance Test" = {
+        onePopVarTest_server("varTest",
+                              var_pop = reactive(input$var_pop),
+                              var_sample = reactive(input$var_sample),
+                              n_sample = reactive(input$n_sample),
+                              conf_int = reactive(input$conf_int),
+                              calculate = reactive(input$calculate),
+                              properTest = reactive(input$properTest)
+        )
+        
+        output$dynamic_plot <- renderUI(distributionPlot_ui("varTest"))
+      },
     )
   }) 
 }
